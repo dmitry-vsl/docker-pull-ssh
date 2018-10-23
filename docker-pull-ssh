@@ -1,0 +1,53 @@
+#!/bin/bash
+
+set -euo pipefail
+
+if [ $# = 0 ] ; then
+  echo docker-push-ssh SSH_HOST IMAGE1 IMAGE2 ...
+  exit 1
+fi
+
+SSH_HOST=$1
+
+shift
+
+IMAGES="$@"
+
+echo Host $SSH_HOST
+echo Images $IMAGES
+
+trap "docker stop registry" EXIT
+
+# TODO check if image with name registry already exists
+docker run  \
+  --rm --name registry -d  \
+  -v /var/lib/registry:/var/lib/registry \
+  -p 127.0.0.1:5000:5000 registry
+
+echo Waiting for registry started
+
+while ! docker ps | grep registry >/dev/null ; do
+  sleep 1
+done
+
+PREFIX="localhost:5000"
+
+echo Registry started
+
+for img in $IMAGES; do
+  docker tag $img $PREFIX/$img
+  echo Pushing $img
+  docker push $PREFIX/$img
+  docker image rm $PREFIX/$img
+done
+
+echo Pulling images on remote server
+
+ssh -t -R 5000:localhost:5000 $SSH_HOST <<-EOF
+  for img in $IMAGES; do
+    echo Pulling \$img
+    docker pull $PREFIX/\$img
+    docker tag  $PREFIX/\$img \$img
+    docker image rm $PREFIX/\$img
+  done
+EOF
